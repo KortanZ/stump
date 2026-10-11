@@ -286,6 +286,18 @@ A **comma-separated** list of additional trusted audiences for ID token verifica
 
 **Example:** `360960386461073457,another-audience`
 
+### STUMP_OIDC_DISCOVERY_CACHE_EXPIRATION
+
+The cache lifetime in seconds for OIDC discovery metadata, including the provider's JWKS. Defaults to `0`, which disables caching and fetches discovery metadata and JWKS on every authorization and callback request. Set a positive value to reuse the metadata until it expires; the next request then refreshes the cache. Failed refreshes return an error and are retried on subsequent requests.
+
+Discovery runs on demand rather than at server startup. If your provider rotates signing keys, choose a short enough lifetime to pick up those changes promptly, or leave caching disabled.
+
+| Type    | Default Value | TOML Key                          |
+| ------- | ------------- | --------------------------------- |
+| Integer | `0`           | `[oidc].discovery_cache_expiration` |
+
+**Example:** `300` caches discovery metadata and JWKS for five minutes.
+
 ## Integrations
 
 ### STUMP_ENABLE_KOBO_SYNC

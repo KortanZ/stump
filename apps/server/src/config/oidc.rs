@@ -1,3 +1,8 @@
+use std::{
+	sync::Arc,
+	time::{Duration, Instant},
+};
+
 use openidconnect::{
 	core::{
 		CoreAuthDisplay, CoreAuthPrompt, CoreAuthenticationFlow, CoreClient,
@@ -13,6 +18,7 @@ use openidconnect::{
 };
 use serde::{Deserialize, Serialize};
 use stump_core::config::OidcConfig;
+use tokio::sync::Mutex;
 
 use crate::errors::APIError;
 
@@ -37,21 +43,19 @@ pub type StumpOidcClient = Client<
 	EndpointMaybeSet,
 >;
 
-/// Cached OIDC client state, initialized once at server startup.
-/// Holds the HTTP client and discovered provider metadata, avoiding
-/// repeated metadata discovery on every OIDC login request.
+/// Shared OIDC HTTP client and optional discovery metadata cache.
 #[derive(Clone)]
 pub struct OidcProvider {
 	pub http_client: oauth2_reqwest::ReqwestClient,
-	provider_metadata: CoreProviderMetadata,
+	issuer_url: IssuerUrl,
+	provider_metadata: Arc<Mutex<Option<(Instant, CoreProviderMetadata)>>>,
+	discovery_cache_expiration: Duration,
 	client_id: String,
 	client_secret: String,
 }
 
 impl OidcProvider {
-	/// Build the HTTP client and discover provider metadata.
-	/// This performs the expensive I/O (metadata discovery) so it should
-	/// be called once at startup and reused.
+	/// Build the shared HTTP client. Discovery is performed when creating a client.
 	pub async fn new(config: &OidcConfig) -> Result<Self, APIError> {
 		let issuer_url = IssuerUrl::new(config.issuer_url.clone()).map_err(|error| {
 			tracing::error!(?error, "Invalid issuer URL for OIDC");
@@ -89,25 +93,50 @@ impl OidcProvider {
 			})?,
 		);
 
-		let provider_metadata =
-			CoreProviderMetadata::discover_async(issuer_url, &http_client)
-				.await
-				.map_err(|e| {
-					tracing::error!(?e, "OIDC discovery failed");
-					APIError::InternalServerError(format!("OIDC discovery failed: {}", e))
-				})?;
-
 		Ok(Self {
 			http_client,
-			provider_metadata,
+			issuer_url,
+			provider_metadata: Arc::new(Mutex::new(None)),
+			discovery_cache_expiration: Duration::from_secs(
+				config.discovery_cache_expiration,
+			),
 			client_id: config.client_id.clone(),
 			client_secret: config.client_secret.clone(),
 		})
 	}
 
-	/// Create a per-request [StumpOidcClient] from the cached state.
-	/// This is cheap — no I/O, just constructs the client with the correct redirect URL.
-	pub fn create_client(&self, frontend_url: &str) -> Result<StumpOidcClient, APIError> {
+	async fn discover_metadata(&self) -> Result<CoreProviderMetadata, APIError> {
+		CoreProviderMetadata::discover_async(self.issuer_url.clone(), &self.http_client)
+			.await
+			.map_err(|e| {
+				tracing::error!(?e, "OIDC discovery failed");
+				APIError::InternalServerError(format!("OIDC discovery failed: {}", e))
+			})
+	}
+
+	async fn get_provider_metadata(&self) -> Result<CoreProviderMetadata, APIError> {
+		if self.discovery_cache_expiration.is_zero() {
+			return self.discover_metadata().await;
+		}
+
+		// Hold the async lock during discovery so concurrent cache misses share a refresh.
+		let mut cached = self.provider_metadata.lock().await;
+		if let Some((fetched_at, metadata)) = cached.as_ref() {
+			if fetched_at.elapsed() < self.discovery_cache_expiration {
+				return Ok(metadata.clone());
+			}
+		}
+
+		let metadata = self.discover_metadata().await?;
+		*cached = Some((Instant::now(), metadata.clone()));
+		Ok(metadata)
+	}
+
+	/// Create a per-request [StumpOidcClient], refreshing discovery when uncached or expired.
+	pub async fn create_client(
+		&self,
+		frontend_url: &str,
+	) -> Result<StumpOidcClient, APIError> {
 		let redirect_uri = format!("{}/api/v2/auth/oidc/callback", frontend_url);
 		let redirect_url = RedirectUrl::new(redirect_uri).map_err(|e| {
 			tracing::error!(?e, "Invalid redirect URI constructed from frontend URL");
@@ -118,7 +147,7 @@ impl OidcProvider {
 		})?;
 
 		Ok(CoreClient::from_provider_metadata(
-			self.provider_metadata.clone(),
+			self.get_provider_metadata().await?,
 			ClientId::new(self.client_id.clone()),
 			Some(ClientSecret::new(self.client_secret.clone())),
 		)

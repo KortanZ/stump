@@ -149,6 +149,9 @@ OIDC can be configured using either environment variables or the TOML configurat
 | `STUMP_OIDC_ALLOW_REGISTRATION` | `true`                 | Allow automatic user registration via OIDC on first login            |
 | `STUMP_OIDC_DISABLE_LOCAL_AUTH` | `false`                | Disable local username/password authentication when OIDC is enabled  |
 | `STUMP_OIDC_EXTRA_AUDIENCES`    | _(none)_               | Comma-separated list of additional trusted audiences in the ID token |
+| `STUMP_OIDC_DISCOVERY_CACHE_EXPIRATION` | `0`             | Discovery metadata and JWKS cache lifetime in seconds; `0` disables caching |
+
+Discovery metadata and JWKS are fetched on every authorization and callback request by default, so provider key rotations are picked up without restarting Stump. Set `STUMP_OIDC_DISCOVERY_CACHE_EXPIRATION` to a positive value to cache them until that lifetime expires. The next request refreshes expired metadata.
 
 ### Configuration Examples
 
@@ -170,6 +173,7 @@ services:
       # STUMP_OIDC_SCOPES: 'openid,email,profile'
       # STUMP_OIDC_ALLOW_REGISTRATION: 'true'
       # STUMP_OIDC_DISABLE_LOCAL_AUTH: 'false'
+      # STUMP_OIDC_DISCOVERY_CACHE_EXPIRATION: '0'
     ports:
       - '10801:10801'
 ```
@@ -193,6 +197,7 @@ client_secret = "super-secret-value"
 scopes = ["openid", "email", "profile"]
 allow_registration = true
 disable_local_auth = false
+discovery_cache_expiration = 0 # Set a positive lifetime in seconds to enable caching
 ```
 
 <Callout type="error">

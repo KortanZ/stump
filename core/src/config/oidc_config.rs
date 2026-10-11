@@ -49,6 +49,10 @@ pub struct OidcConfig {
 
 	/// Path to a CA certificate file (PEM-encoded) to trust when connecting to the OIDC issuer
 	pub ca_cert_file: Option<String>,
+
+	/// Discovery metadata and JWKS cache lifetime in seconds. Zero disables caching.
+	#[setting(default = 0)]
+	pub discovery_cache_expiration: u64,
 }
 
 impl OidcConfig {
@@ -81,6 +85,10 @@ impl std::fmt::Debug for OidcConfig {
 			.field("disable_local_auth", &self.disable_local_auth)
 			.field("extra_audiences", &self.extra_audiences)
 			.field("ca_cert_file", &self.ca_cert_file)
+			.field(
+				"discovery_cache_expiration",
+				&self.discovery_cache_expiration,
+			)
 			.finish()
 	}
 }
