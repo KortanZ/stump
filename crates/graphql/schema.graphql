@@ -1066,6 +1066,16 @@ type JobUpdate {
 	totalSubtasks: Int
 }
 
+type JournalEntryModel {
+	id: Int!
+	content: String!
+	userId: String!
+	mediaId: String!
+	sessionId: Int
+	createdAt: DateTime!
+	updatedAt: DateTime!
+}
+
 type Library {
 	id: String!
 	name: String!
@@ -1395,7 +1405,10 @@ type Media {
 	"""
 	readingTimeline(order: OrderDirection! = DESC): BookReadingTimeline
 	seriesPosition: Int
-	"The next media in the series, ordered by name"
+	"""
+	The next media in the series, ordered by metadata series position
+	when available and falling back to name if not
+	"""
 	nextInSeries(pagination: Pagination! = {offset: {page: 1, pageSize: 20, zeroBased: false}}): PaginatedMediaResponse!
 	"""
 	The path to the media file **relative** to the library path. This is only useful for
@@ -1979,6 +1992,11 @@ type Mutation {
 	"Clear the scan history for a specific library"
 	clearScanHistory(id: ID!): Int!
 	"""
+	Clear the stored directory mtimes for a library, forcing the next scan to do a
+	full walk
+	"""
+	clearLibraryScannedDirectories(id: ID!): Int!
+	"""
 	Create a new library with the provided configuration. If `scan_after_persist` is `true`,
 	the library will be scanned immediately after creation.
 	"""
@@ -2224,11 +2242,20 @@ type Mutation {
 	may delete it
 	"""
 	deleteReadingSession(sessionId: Int!): Boolean!
+	extendReadingSession(sessionId: Int!): ReadingSession!
 	"""
 	Updates a reading session for the authenticated user, exposing a small
 	set of fields which are editable
 	"""
 	patchReadingSession(sessionId: Int!, input: PatchReadingSession!): ReadingSession!
+	"Upserts a reading journal entry for the authenticated user and the given reading session"
+	upsertReadingSessionJournalEntry(sessionId: Int!, content: String!): JournalEntryModel!
+	"Deletes a reading journal entry for the authenticated user"
+	deleteJournalEntry(entryId: Int!): Boolean!
+	"Upserts a reading device for the authenticated user"
+	upsertReadingDevice(id: String!, name: String!): ReadingDeviceModel!
+	"Deletes a reading device owned by the authenticated user"
+	deleteReadingDevice(deviceId: Int!): Boolean!
 }
 
 """
@@ -2517,7 +2544,7 @@ input PatchMetadataProviderConfigInput {
 }
 
 input PatchReadingSession {
-	elapsedSeconds: String
+	elapsedSeconds: Int
 	status: ReadingStatus
 }
 
@@ -2690,6 +2717,14 @@ type Query {
 	customEmojis: [CustomEmoji!]!
 }
 
+type ReadingDeviceModel {
+	id: String!
+	userId: String!
+	name: String!
+	createdAt: DateTime!
+	updatedAt: DateTime!
+}
+
 "The different reading directions supported by any Stump reader"
 enum ReadingDirection {
 	LTR
@@ -2749,12 +2784,13 @@ type ReadingSession {
 	state of the session when it was last updated
 	"""
 	status: ReadingStatus!
-	notes: String
 	mediaId: String!
 	userId: String!
 	createdAt: DateTime!
 	updatedAt: DateTime
 	deviceIds: [String!]!
+	"The devices which were used during this reading session"
+	devices: [ReadingDeviceModel!]!
 	"""
 	The media which this session belongs to. Please note that if somehow the user loses access to the
 	media record, e.g. via access control, then this will resolve to `None` to avoid leaking
@@ -2771,6 +2807,8 @@ type ReadingSession {
 	of sessions but more a detail view into a single session, etc.
 	"""
 	chaptersRead: [String!]!
+	isLatest: Boolean!
+	journalEntry: JournalEntryModel
 }
 
 """
